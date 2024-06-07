@@ -1,0 +1,6 @@
+[submodule "Zeptron"]
+	path = Zeptron
+	url = https://github.com/zDox/Zeptron.git
+[submodule "riscv-arch-test"]
+	path = riscv-arch-test
+	url = https://github.com/riscv-non-isa/riscv-arch-test.git
