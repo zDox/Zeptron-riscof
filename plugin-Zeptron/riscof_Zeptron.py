@@ -81,19 +81,26 @@ class Zeptron(pluginTemplate):
         # Note the march is not hardwired here, because it will change for each
         # test. Similarly the output elf name and compile macros will be
         # assigned later in the runTests function
-        self.compile_cmd = (
-            "riscv{1}-unknown-elf-gcc -march={0} \
+        self.compile_cmd_tp = Template(
+            "riscv${xlen}-unknown-elf-gcc -march=${isa} -mabi=${abi}\
           -static -mcmodel=medany -fvisibility=hidden -nostdlib -nostartfiles\
           -g \
-          -T "
-            + self.pluginpath
-            + "/env/link.ld\
-          -I "
-            + self.pluginpath
-            + "/env/\
-          -I "
-            + archtest_env
-            + " {2} -o {3} {4}"
+          -T ${pluginpath}/env/link.ld\
+          -I ${pluginpath}/env/\
+          -I ${archtest_env} \
+            ${test_path} -o ${elf} ${compile_macros}"
+        )
+        self.subsitutions = {"archtest_env": archtest_env}
+
+        "riscv32-unknown-elf-objcopy -O binary my.elf a.bin --strip-debug"
+        self.objcopy_cmd_tp = Template(
+            "riscv${xlen}-unknown-elf-objcopy \
+                    -O binary \
+                    ${elf} ${bin_file} --strip-debug"
+        )
+
+        self.hexconv_cmd_tp = Template(
+            "od -t x4 -An -w4 -v ${bin_file} >> ${hex_file}"
         )
 
         # add more utility snippets here
@@ -116,13 +123,8 @@ class Zeptron(pluginTemplate):
         if "C" in ispec["ISA"]:
             self.isa += 'c'
 
-        # TODO: The following assumes you are using the riscv-gcc toolchain. If
-        #       not please change appropriately
-        self.compile_cmd = (
-            self.compile_cmd
-            + " -mabi="
-            + ("lp64 " if 64 in ispec["supported_xlen"] else "ilp32 ")
-        )
+        self.subsitutions["abi"] = "lp64" \
+            if 64 in ispec["supported_xlen"] else "ilp32"
 
     def runTests(self, testList):
 
@@ -150,7 +152,7 @@ class Zeptron(pluginTemplate):
             testentry = testList[testname]
 
             # we capture the path to the assembly file of this test
-            test = testentry["test_path"]
+            test_path = testentry["test_path"]
 
             # capture the directory where the artifacts of this test will be
             # dumped/created. RISCOF is going to look into this directory
@@ -159,6 +161,12 @@ class Zeptron(pluginTemplate):
 
             # name of the elf file after compilation of the test
             elf = "my.elf"
+
+            # name of the binary file after objcopy
+            bin_file = "my.bin"
+
+            # name of the hex file after od command
+            hex_file = "my.hex"
 
             # name of the signature file as per requirement of RISCOF. RISCOF
             # expects the signature to be named as DUT-<dut-name>.signature.
@@ -171,10 +179,30 @@ class Zeptron(pluginTemplate):
             # The following does precisely that.
             compile_macros = " -D" + " -D".join(testentry["macros"])
 
+            logger.debug(self.compile_cmd_tp.safe_substitute())
             # substitute all variables in the compile command that we created
             # in the initialize function
-            cmd = self.compile_cmd.format(
-                testentry["isa"].lower(), self.xlen, test, elf, compile_macros
+            compile_cmd = self.compile_cmd_tp.substitute(
+                self.subsitutions,
+                xlen=self.xlen,
+                isa=testentry["isa"].lower(),
+                pluginpath=self.pluginpath,
+                test_path=test_path,
+                elf=elf,
+                compile_macros=compile_macros,
+            )
+
+            # substitute all variables in the objcopy command
+            objcopy_cmd = self.objcopy_cmd_tp.substitute(
+                xlen=self.xlen,
+                elf=elf,
+                bin_file=bin_file,
+            )
+
+            # substitute all variables in the hexconv command
+            hexconv_cmd = self.hexconv_cmd_tp.substitute(
+                bin_file=bin_file,
+                hex_file=hex_file
             )
 
             # if the user wants to disable running the tests and only compile
@@ -195,8 +223,13 @@ class Zeptron(pluginTemplate):
 
             # concatenate all commands that need to be executed within a
             # make-target.
-            execute = "@cd {0}; {1}; {2};".format(testentry["work_dir"], cmd,
-                                                  simcmd)
+            execute = "@cd {0}; {1}; {2}; {3}; {4};".format(
+                    testentry["work_dir"],
+                    compile_cmd,
+                    objcopy_cmd,
+                    hexconv_cmd,
+                    simcmd,
+            )
 
             # create a target. The makeutil will create a target with the name
             # "TARGET<num>" where num starts from 0 and increments
