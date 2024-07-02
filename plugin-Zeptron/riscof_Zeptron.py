@@ -34,14 +34,21 @@ class Zeptron(pluginTemplate):
             print("Please enter input file paths in configuration.")
             raise SystemExit(1)
 
+        # Path to the directory where this python file is located. Collect it
+        # from the config.ini
+        self.pluginpath = os.path.abspath(config["pluginpath"])
+
         # In case of an RTL based DUT, this would be point to the final binary
         # executable of your test-bench produced by a simulator
         # (like verilator, vcs, incisive, etc). In case of an iss or emulator,
         # this variable could point to where the iss binary is located.
         # If 'PATH variable is missing in the config.ini we can
         # hardcode the alternate here.
-        self.dut_exe = os.path.join(config["PATH"] if "PATH" in config else "",
-                                    "Zeptron")
+        self.dut_exe_cmd_tp = Template("${exe} ${mem_content} ${signature}")
+        self.dut_exe_cmd_tp = Template(self.dut_exe_cmd_tp.safe_substitute(
+                exe=os.path.abspath(config["PATH"] + "/test.sh")))
+
+        self.dut_build_cmd = os.path.join("./Zeptron/build.sh")
 
         # Number of parallel jobs that can be spawned off by RISCOF
         # for various actions performed in later functions, specifically to
@@ -49,9 +56,6 @@ class Zeptron(pluginTemplate):
         # in the build function if required.
         self.num_jobs = str(config["jobs"] if "jobs" in config else 1)
 
-        # Path to the directory where this python file is located. Collect it
-        # from the config.ini
-        self.pluginpath = os.path.abspath(config["pluginpath"])
 
         # Collect the paths to the  riscv-config absed ISA and platform yaml
         # files. One can choose to hardcode these here itself instead of
@@ -92,15 +96,8 @@ class Zeptron(pluginTemplate):
         )
         self.subsitutions = {"archtest_env": archtest_env}
 
-        "riscv32-unknown-elf-objcopy -O binary my.elf a.bin --strip-debug"
-        self.objcopy_cmd_tp = Template(
-            "riscv${xlen}-unknown-elf-objcopy \
-                    -O binary \
-                    ${elf} ${bin_file} --strip-debug"
-        )
-
-        self.hexconv_cmd_tp = Template(
-            "od -t x4 -An -w4 -v ${bin_file} >> ${hex_file}"
+        self.elf2hex_cmd_tp = Template(
+            "elf2hex 4 524288 ${elf} >> ${hex_file}"
         )
 
         # add more utility snippets here
@@ -125,6 +122,8 @@ class Zeptron(pluginTemplate):
 
         self.subsitutions["abi"] = "lp64" \
             if 64 in ispec["supported_xlen"] else "ilp32"
+
+        utils.shellCommand(self.dut_build_cmd).run()
 
     def runTests(self, testList):
 
@@ -162,9 +161,6 @@ class Zeptron(pluginTemplate):
             # name of the elf file after compilation of the test
             elf = "my.elf"
 
-            # name of the binary file after objcopy
-            bin_file = "my.bin"
-
             # name of the hex file after od command
             hex_file = "my.hex"
 
@@ -193,15 +189,8 @@ class Zeptron(pluginTemplate):
             )
 
             # substitute all variables in the objcopy command
-            objcopy_cmd = self.objcopy_cmd_tp.substitute(
-                xlen=self.xlen,
+            elf2hex_cmd = self.elf2hex_cmd_tp.substitute(
                 elf=elf,
-                bin_file=bin_file,
-            )
-
-            # substitute all variables in the hexconv command
-            hexconv_cmd = self.hexconv_cmd_tp.substitute(
-                bin_file=bin_file,
                 hex_file=hex_file
             )
 
@@ -211,23 +200,19 @@ class Zeptron(pluginTemplate):
             if self.target_run:
                 # set up the simulation command. Template is for spike.
                 # Please change.
-                simcmd = (
-                    self.dut_exe
-                    + " --isa={0} +signature={1} +signature-granularity=4 {2}"
-                    .format(
-                        self.isa, sig_file, elf
-                    )
+                simcmd = self.dut_exe_cmd_tp.safe_substitute(
+                        mem_content=hex_file,
+                        signature=sig_file
                 )
             else:
                 simcmd = 'echo "NO RUN"'
 
             # concatenate all commands that need to be executed within a
             # make-target.
-            execute = "@cd {0}; {1}; {2}; {3}; {4};".format(
+            execute = "@cd {0}; {1}; {2}; {3};".format(
                     testentry["work_dir"],
                     compile_cmd,
-                    objcopy_cmd,
-                    hexconv_cmd,
+                    elf2hex_cmd,
                     simcmd,
             )
 
