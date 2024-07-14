@@ -1,5 +1,5 @@
 # Zeptron-riscof
-RISCV Verification of Zeptron
+RISCV Verification of Zeptron using [riscof](https://riscof.readthedocs.io/en/stable/)
 
 ## Result
 - :white_check_mark:  32  tests passed
